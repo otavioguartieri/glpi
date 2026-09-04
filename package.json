@@ -1,0 +1,233 @@
+{
+  "name": "glpi-ticket",
+  "displayName": "GLPI - Abrir Chamado",
+  "description": "Crie, acompanhe e resolva chamados do GLPI direto no VSCode (usa a API REST legada do GLPI, v1): timeline completa com mensagens, tarefas, anexos e aprovacoes, edicao de detalhes, filtros, ordenacao e painel de indicadores.",
+  "version": "5.8.0",
+  "publisher": "OtavioGuartieri",
+  "author": "Otavio Ribeiro Guartiéri - Poupacred",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [],
+  "main": "./extension.js",
+  "icon": "media/icon.png",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "glpi",
+          "title": "GLPI",
+          "icon": "media/glpi.svg"
+        }
+      ]
+    },
+    "views": {
+      "glpi": [
+        {
+          "id": "glpi.chamado",
+          "name": "Abrir Chamado",
+          "type": "webview"
+        },
+        {
+          "id": "glpi.lista",
+          "name": "Chamados"
+        },
+        {
+          "id": "glpi.meus",
+          "name": "Meus Atribuidos"
+        },
+        {
+          "id": "glpi.painel",
+          "name": "Painel",
+          "type": "webview"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "glpi.reconfigurar",
+        "title": "GLPI: Reconfigurar credenciais",
+        "icon": "$(gear)"
+      },
+      {
+        "command": "glpi.atualizarLista",
+        "title": "GLPI: Atualizar lista de chamados",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "glpi.atualizarMeus",
+        "title": "GLPI: Atualizar meus atribuidos",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "glpi.filtrarMeus",
+        "title": "GLPI: Filtrar meus atribuidos",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "glpi.filtrar",
+        "title": "GLPI: Filtrar chamados",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "glpi.ordenarLista",
+        "title": "GLPI: Ordenar chamados",
+        "icon": "$(list-ordered)"
+      },
+      {
+        "command": "glpi.ordenarMeus",
+        "title": "GLPI: Ordenar meus atribuidos",
+        "icon": "$(list-ordered)"
+      },
+      {
+        "command": "glpi.buscarPorId",
+        "title": "GLPI: Buscar chamado por ID",
+        "icon": "$(search)"
+      },
+      {
+        "command": "glpi.renomearChamado",
+        "title": "GLPI: Renomear chamado",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "glpi.abrirDetalhes",
+        "title": "GLPI: Abrir chamado"
+      },
+      {
+        "command": "glpi.abrirDetalhesAoLado",
+        "title": "GLPI: Abrir chamado na aba ao lado",
+        "icon": "$(split-horizontal)"
+      },
+      {
+        "command": "glpi.limparFiltro",
+        "title": "GLPI: Limpar filtro",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "glpi.atualizarPainel",
+        "title": "GLPI: Atualizar painel",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "glpi.marcarVisualizado",
+        "title": "GLPI: Marcar como visualizado",
+        "icon": "$(check)"
+      },
+      {
+        "command": "glpi.removerVisualizado",
+        "title": "GLPI: Remover visualizado",
+        "icon": "$(circle-slash)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "glpi.reconfigurar",
+          "when": "view == glpi.chamado",
+          "group": "navigation"
+        },
+        {
+          "command": "glpi.buscarPorId",
+          "when": "view == glpi.lista",
+          "group": "navigation@1"
+        },
+        {
+          "command": "glpi.filtrar",
+          "when": "view == glpi.lista",
+          "group": "navigation@2"
+        },
+        {
+          "command": "glpi.ordenarLista",
+          "when": "view == glpi.lista",
+          "group": "navigation@3"
+        },
+        {
+          "command": "glpi.limparFiltro",
+          "when": "view == glpi.lista",
+          "group": "navigation@4"
+        },
+        {
+          "command": "glpi.atualizarLista",
+          "when": "view == glpi.lista",
+          "group": "navigation@5"
+        },
+        {
+          "command": "glpi.filtrarMeus",
+          "when": "view == glpi.meus",
+          "group": "navigation@1"
+        },
+        {
+          "command": "glpi.ordenarMeus",
+          "when": "view == glpi.meus",
+          "group": "navigation@2"
+        },
+        {
+          "command": "glpi.atualizarMeus",
+          "when": "view == glpi.meus",
+          "group": "navigation@3"
+        },
+        {
+          "command": "glpi.atualizarPainel",
+          "when": "view == glpi.painel",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "glpi.renomearChamado",
+          "when": "view == glpi.lista && (viewItem == chamadoVisto || viewItem == chamadoNvisto)",
+          "group": "inline"
+        },
+        {
+          "command": "glpi.renomearChamado",
+          "when": "view == glpi.meus && (viewItem == chamadoVisto || viewItem == chamadoNvisto)",
+          "group": "inline"
+        },
+        {
+          "command": "glpi.abrirDetalhes",
+          "when": "view == glpi.lista && (viewItem == chamadoVisto || viewItem == chamadoNvisto)",
+          "group": "1_glpi@1"
+        },
+        {
+          "command": "glpi.abrirDetalhesAoLado",
+          "when": "view == glpi.lista && (viewItem == chamadoVisto || viewItem == chamadoNvisto)",
+          "group": "1_glpi@2"
+        },
+        {
+          "command": "glpi.abrirDetalhes",
+          "when": "view == glpi.meus && (viewItem == chamadoVisto || viewItem == chamadoNvisto)",
+          "group": "1_glpi@1"
+        },
+        {
+          "command": "glpi.abrirDetalhesAoLado",
+          "when": "view == glpi.meus && (viewItem == chamadoVisto || viewItem == chamadoNvisto)",
+          "group": "1_glpi@2"
+        },
+        {
+          "command": "glpi.marcarVisualizado",
+          "when": "view == glpi.lista && viewItem == chamadoNvisto",
+          "group": "2_glpi@1"
+        },
+        {
+          "command": "glpi.removerVisualizado",
+          "when": "view == glpi.lista && viewItem == chamadoVisto",
+          "group": "2_glpi@1"
+        },
+        {
+          "command": "glpi.marcarVisualizado",
+          "when": "view == glpi.meus && viewItem == chamadoNvisto",
+          "group": "2_glpi@1"
+        },
+        {
+          "command": "glpi.removerVisualizado",
+          "when": "view == glpi.meus && viewItem == chamadoVisto",
+          "group": "2_glpi@1"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,38 @@
+name: Release da extensao
+
+# Roda sempre que uma tag de versao for enviada (ex: v5.8.0, v6.0.0).
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Baixar o codigo
+        uses: actions/checkout@v4
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Instalar o empacotador da extensao
+        run: npm install -g @vscode/vsce
+
+      - name: Gerar o .vsix
+        run: vsce package --allow-missing-repository
+
+      - name: Copiar como "latest" (link fixo, sempre a versao mais nova)
+        run: cp *.vsix glpi-ticket-latest.vsix
+
+      - name: Publicar a release no GitHub
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            *.vsix
+          generate_release_notes: true

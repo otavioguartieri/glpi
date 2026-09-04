@@ -1,0 +1,21 @@
+# Pacotes gerados (nao versionar o build, so o codigo-fonte)
+*.vsix
+
+# Dependencias (o projeto nao tem nenhuma hoje, mas fica preparado)
+node_modules/
+
+# Saida de build, caso passe a existir
+out/
+dist/
+
+# Testes do VSCode
+.vscode-test/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Arquivos de SO
+.DS_Store
+Thumbs.db
