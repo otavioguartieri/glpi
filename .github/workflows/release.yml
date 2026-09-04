@@ -1,38 +1,65 @@
-name: Release da extensao
+name: Release automatico
 
-# Roda sempre que uma tag de versao for enviada (ex: v5.8.0, v6.0.0).
 on:
   push:
-    tags:
-      - 'v*.*.*'
+    branches: [main]
 
 permissions:
   contents: write
 
 jobs:
-  build-and-release:
+  verificar-e-lancar:
     runs-on: ubuntu-latest
     steps:
-      - name: Baixar o codigo
+      - name: Baixar o codigo (com historico de tags)
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Ler a versao do package.json
+        id: pkg
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Verificar se ja existe uma tag para essa versao
+        id: check
+        run: |
+          if git rev-parse "v${{ steps.pkg.outputs.version }}" >/dev/null 2>&1; then
+            echo "ja existe uma tag para v${{ steps.pkg.outputs.version }} - nada a fazer"
+            echo "existe=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "versao nova detectada: v${{ steps.pkg.outputs.version }}"
+            echo "existe=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Configurar Node.js
+        if: steps.check.outputs.existe == 'false'
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
       - name: Instalar o empacotador da extensao
+        if: steps.check.outputs.existe == 'false'
         run: npm install -g @vscode/vsce
 
       - name: Gerar o .vsix
+        if: steps.check.outputs.existe == 'false'
         run: vsce package --allow-missing-repository
 
       - name: Copiar como "latest" (link fixo, sempre a versao mais nova)
+        if: steps.check.outputs.existe == 'false'
         run: cp *.vsix glpi-ticket-latest.vsix
 
+      - name: Criar e enviar a tag da versao
+        if: steps.check.outputs.existe == 'false'
+        run: |
+          git tag "v${{ steps.pkg.outputs.version }}"
+          git push origin "v${{ steps.pkg.outputs.version }}"
+
       - name: Publicar a release no GitHub
+        if: steps.check.outputs.existe == 'false'
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: v${{ steps.pkg.outputs.version }}
           files: |
             *.vsix
           generate_release_notes: true
