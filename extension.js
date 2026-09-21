@@ -103,11 +103,23 @@ async function initSession(cfg) {
       Authorization: `user_token ${cfg.userToken}`
     }
   });
-  const data = await res.json().catch(() => null);
-  if (!res.ok) {
-    throw new Error(`initSession falhou (${res.status}): ${JSON.stringify(data)}`);
+  const bruto = await res.text().catch(() => '');
+  let data = null;
+  try {
+    data = JSON.parse(bruto);
+  } catch (_) {
+    data = null;
   }
-  return data.session_token;
+  if (!res.ok) {
+    // Corpo nao-JSON num 403 costuma ser WAF/proxy na frente do GLPI (ou a API
+    // REST desativada), nao o GLPI recusando o token: o GLPI responde erro como
+    // ["ERROR_...", "mensagem"]. Mostrar o texto cru distingue os dois casos.
+    const detalhe = data
+      ? JSON.stringify(data)
+      : (bruto ? bruto.replace(/\s+/g, ' ').trim().slice(0, 300) : '(corpo vazio)');
+    throw new Error(`initSession falhou (${res.status}): ${detalhe}`);
+  }
+  return data && data.session_token;
 }
 
 async function killSession(cfg, sessionToken) {
@@ -744,10 +756,16 @@ async function buscarTicketsFiltrado(cfg, sessionToken, filtro, limite = 50) {
 // 403 por parecer forca bruta. A sessao e renovada um pouco antes do tempo
 // assumido de expiracao, e tambem se qualquer chamada relatar 401/403.
 let cacheSessao = { token: null, apiUrl: null, expiraEm: 0 };
+// Login em andamento, compartilhado por todos os chamadores. Sem isso, as views
+// que carregam juntas (lista, meus atribuidos, painel, formulario, notificacoes)
+// encontram o cache vazio ao mesmo tempo e disparam um initSession cada uma --
+// exatamente a rajada de logins que faz WAF/proxy responder 403.
+let loginEmAndamento = null;
 const DURACAO_SESSAO_MS = 4 * 60 * 1000; // renovada antes do timeout tipico do GLPI
 
 function limparCacheSessao() {
   cacheSessao = { token: null, apiUrl: null, expiraEm: 0 };
+  loginEmAndamento = null;
 }
 
 async function obterTokenSessao(cfg) {
@@ -755,9 +773,17 @@ async function obterTokenSessao(cfg) {
   if (cacheSessao.token && cacheSessao.apiUrl === cfg.apiUrl && agora < cacheSessao.expiraEm) {
     return cacheSessao.token;
   }
-  const token = await initSession(cfg);
-  cacheSessao = { token, apiUrl: cfg.apiUrl, expiraEm: agora + DURACAO_SESSAO_MS };
-  return token;
+  if (loginEmAndamento) return loginEmAndamento;
+  loginEmAndamento = (async () => {
+    try {
+      const token = await initSession(cfg);
+      cacheSessao = { token, apiUrl: cfg.apiUrl, expiraEm: Date.now() + DURACAO_SESSAO_MS };
+      return token;
+    } finally {
+      loginEmAndamento = null;
+    }
+  })();
+  return loginEmAndamento;
 }
 
 async function comSessao(cfg, fn) {
@@ -766,6 +792,10 @@ async function comSessao(cfg, fn) {
     return await fn(token);
   } catch (e) {
     const msg = String((e && e.message) || '');
+    // Retry so quando a chamada de dados falhou por sessao invalida. Se o
+    // proprio initSession devolveu 403, repetir apenas soma mais um login a
+    // uma rajada que ja esta sendo barrada.
+    if (msg.startsWith('initSession falhou')) throw e;
     // Sessao pode ter expirado/sido invalidada no meio do caminho: tenta uma
     // vez com uma sessao nova antes de desistir.
     if (msg.includes('(401)') || msg.includes('(403)')) {
