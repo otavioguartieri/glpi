@@ -88,8 +88,14 @@ async function pedirCredenciais(context) {
 // ---------------------------------------------------------------------------
 // Cliente da API REST do GLPI
 // ---------------------------------------------------------------------------
+// O fetch do Node manda um User-Agent que nao parece navegador, e protecoes de
+// bot na frente do GLPI (Cloudflare Bot Fight Mode, por exemplo) barram isso com
+// 403 e uma pagina de desafio em HTML, antes da requisicao chegar ao GLPI.
+const USER_AGENT =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
+
 function cabecalho(cfg, sessionToken, comJson) {
-  const h = { 'App-Token': cfg.appToken, 'Session-Token': sessionToken };
+  const h = { 'App-Token': cfg.appToken, 'Session-Token': sessionToken, 'User-Agent': USER_AGENT };
   if (comJson) h['Content-Type'] = 'application/json';
   return h;
 }
@@ -100,6 +106,7 @@ async function initSession(cfg) {
     headers: {
       'Content-Type': 'application/json',
       'App-Token': cfg.appToken,
+      'User-Agent': USER_AGENT,
       Authorization: `user_token ${cfg.userToken}`
     }
   });
@@ -114,6 +121,14 @@ async function initSession(cfg) {
     // Corpo nao-JSON num 403 costuma ser WAF/proxy na frente do GLPI (ou a API
     // REST desativada), nao o GLPI recusando o token: o GLPI responde erro como
     // ["ERROR_...", "mensagem"]. Mostrar o texto cru distingue os dois casos.
+    // Pagina de desafio de bot (Cloudflare e afins): a requisicao foi barrada
+    // antes de chegar ao GLPI, entao nao adianta mexer em token nem em sessao.
+    if (!data && /just a moment|cf-browser-verification|challenge-platform|Attention Required/i.test(bruto)) {
+      throw new Error(
+        `initSession falhou (${res.status}): bloqueado por protecao de bot (Cloudflare) antes de chegar ao GLPI. ` +
+          'Libere o caminho /apirest.php no Cloudflare (regra de WAF "Skip" para Bot Fight Mode e Managed Challenge).'
+      );
+    }
     const detalhe = data
       ? JSON.stringify(data)
       : (bruto ? bruto.replace(/\s+/g, ' ').trim().slice(0, 300) : '(corpo vazio)');
@@ -529,7 +544,7 @@ async function uploadDocumento(cfg, sessionToken, nomeArquivo, mimeType, base64D
   fd.append('filename[0]', blob, nomeArquivo);
   const res = await fetch(`${cfg.apiUrl}/Document`, {
     method: 'POST',
-    headers: { 'App-Token': cfg.appToken, 'Session-Token': sessionToken },
+    headers: { 'App-Token': cfg.appToken, 'Session-Token': sessionToken, 'User-Agent': USER_AGENT },
     body: fd
   });
   const data = await res.json().catch(() => null);
@@ -561,6 +576,7 @@ async function baixarDocumento(cfg, sessionToken, docId) {
     headers: {
       'App-Token': cfg.appToken,
       'Session-Token': sessionToken,
+      'User-Agent': USER_AGENT,
       Accept: 'application/octet-stream'
     }
   });
