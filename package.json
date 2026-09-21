@@ -2,7 +2,7 @@
   "name": "glpi-ticket",
   "displayName": "GLPI - Abrir Chamado",
   "description": "Crie, acompanhe e resolva chamados do GLPI direto no VSCode (usa a API REST legada do GLPI, v1): timeline completa com mensagens, tarefas, anexos e aprovacoes, edicao de detalhes, filtros, ordenacao e painel de indicadores.",
-  "version": "5.8.2",
+  "version": "5.8.3",
   "publisher": "OtavioGuartieri",
   "author": "Otavio Ribeiro Guartiéri - Poupacred",
   "license": "MIT",

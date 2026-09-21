@@ -94,6 +94,16 @@ async function pedirCredenciais(context) {
 const USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
 
+// Caminho da API dentro do dominio, para mensagens de erro. A URL configurada
+// varia por instancia: "/apirest.php" na API legada, "/api.php/v1" na nova.
+function caminhoApi(apiUrl) {
+  try {
+    return new URL(String(apiUrl)).pathname.replace(/\/+$/, '') || '/apirest.php';
+  } catch (_) {
+    return '/apirest.php';
+  }
+}
+
 function cabecalho(cfg, sessionToken, comJson) {
   const h = { 'App-Token': cfg.appToken, 'Session-Token': sessionToken, 'User-Agent': USER_AGENT };
   if (comJson) h['Content-Type'] = 'application/json';
@@ -126,7 +136,8 @@ async function initSession(cfg) {
     if (!data && /just a moment|cf-browser-verification|challenge-platform|Attention Required/i.test(bruto)) {
       throw new Error(
         `initSession falhou (${res.status}): bloqueado por protecao de bot (Cloudflare) antes de chegar ao GLPI. ` +
-          'Libere o caminho /apirest.php no Cloudflare (regra de WAF "Skip" para Bot Fight Mode e Managed Challenge).'
+          `Libere o caminho ${caminhoApi(cfg.apiUrl)} no Cloudflare ` +
+          '(regra de WAF "Skip" para Bot Fight Mode e Managed Challenge).'
       );
     }
     const detalhe = data
