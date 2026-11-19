@@ -252,6 +252,19 @@ async function obterResumoAprovacao(cfg, sessionToken, ticketId) {
   return 'nenhuma';
 }
 
+// Remove um pedido de aprovacao (TicketValidation nao tem lixeira: apaga de vez).
+async function excluirValidacao(cfg, sessionToken, validacaoId) {
+  const res = await fetch(`${cfg.apiUrl}/TicketValidation/${validacaoId}`, {
+    method: 'DELETE',
+    headers: cabecalho(cfg, sessionToken, true)
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok) {
+    throw new Error(`Falha ao remover pedido de aprovacao (${res.status}): ${JSON.stringify(data)}`);
+  }
+  return data;
+}
+
 async function obterDocumentos(cfg, sessionToken, id) {
   const vinculos = await obterGenerico(cfg, sessionToken, `Ticket/${id}/Document_Item?range=0-499`);
   const lista = Array.isArray(vinculos) ? vinculos : [];
@@ -367,10 +380,11 @@ const editarTicketConteudo = (cfg, token, ticketId, content) =>
 const alterarStatusTicket = (cfg, token, ticketId, status) =>
   editarTicket(cfg, token, ticketId, { status: Number(status) });
 
-// Exclusao "suave": sem force_purge, o GLPI move o chamado para a lixeira
-// (reversivel pela interface web), em vez de apagar definitivamente.
-async function excluirTicket(cfg, sessionToken, ticketId) {
-  const res = await fetch(`${cfg.apiUrl}/Ticket/${ticketId}`, {
+// Sem force_purge, o GLPI move o chamado para a lixeira (reversivel pela
+// interface web). Com permanente=true, apaga definitivamente (force_purge).
+async function excluirTicket(cfg, sessionToken, ticketId, permanente) {
+  const sufixo = permanente ? '?force_purge=true' : '';
+  const res = await fetch(`${cfg.apiUrl}/Ticket/${ticketId}${sufixo}`, {
     method: 'DELETE',
     headers: cabecalho(cfg, sessionToken, true)
   });
@@ -1853,6 +1867,7 @@ class GlpiDetalhePanel {
       coluna,
       { enableScripts: true, retainContextWhenHidden: true }
     );
+    panel.iconPath = vscode.Uri.joinPath(context.extensionUri, 'media', 'icon.png');
     const inst = new GlpiDetalhePanel(context, panel, ticketId, cred);
     GlpiDetalhePanel.paineis.set(ticketId, inst);
     if (!aoLado) {
@@ -1887,6 +1902,11 @@ class GlpiDetalhePanel {
       } else if (msg.type === 'copiarLink') {
         await vscode.env.clipboard.writeText(urlChamadoWeb(this.cred.apiUrl, this.ticketId));
         vscode.window.showInformationMessage('Link do chamado copiado.');
+      } else if (msg.type === 'copiarMensagemPadrao') {
+        const titulo = String(this.tituloAtual || '').trim();
+        const texto = `*#${this.ticketId} | ${titulo}*\n${urlChamadoWeb(this.cred.apiUrl, this.ticketId)}`;
+        await vscode.env.clipboard.writeText(texto);
+        vscode.window.showInformationMessage(`Mensagem do chamado #${this.ticketId} copiada.`);
       } else if (msg.type === 'salvarAlteracoes') {
         // Salvamento unificado: campos gerais + atores, tudo de uma vez.
         await comSessao(this.cred, async (t) => {
@@ -1923,6 +1943,16 @@ class GlpiDetalhePanel {
         if (confirmacao !== 'Excluir') return;
         await comSessao(this.cred, (t) => excluirFollowup(this.cred, t, msg.id));
         await this.carregar();
+      } else if (msg.type === 'excluirValidacao') {
+        const confirmacao = await vscode.window.showWarningMessage(
+          'Remover este pedido de aprovacao? Esta acao nao pode ser desfeita.',
+          { modal: true },
+          'Remover'
+        );
+        if (confirmacao !== 'Remover') return;
+        await comSessao(this.cred, (t) => excluirValidacao(this.cred, t, msg.id));
+        await this.carregar();
+        if (GlpiDetalhePanel.aoAlterarListas) GlpiDetalhePanel.aoAlterarListas();
       } else if (msg.type === 'excluirDocumento') {
         const confirmacao = await vscode.window.showWarningMessage(
           `Excluir o anexo "${msg.nome || ''}"? Ele sera movido para a lixeira do GLPI.`,
@@ -1988,14 +2018,21 @@ class GlpiDetalhePanel {
         await this.context.globalState.update('glpi.larguraPainelDetalhe', msg.largura);
       } else if (msg.type === 'excluirChamado') {
         // Segunda confirmacao (a primeira foi o overlay dentro do painel).
+        const permanente = Boolean(msg.permanente);
         const confirmacao = await vscode.window.showWarningMessage(
-          `Excluir o chamado #${this.ticketId}? Ele sera movido para a lixeira do GLPI.`,
+          permanente
+            ? `Excluir PERMANENTEMENTE o chamado #${this.ticketId}? Esta acao nao pode ser desfeita.`
+            : `Mover o chamado #${this.ticketId} para a lixeira do GLPI?`,
           { modal: true },
-          'Excluir'
+          permanente ? 'Excluir permanentemente' : 'Mover para lixeira'
         );
-        if (confirmacao !== 'Excluir') return;
-        await comSessao(this.cred, (t) => excluirTicket(this.cred, t, this.ticketId));
-        vscode.window.showInformationMessage(`Chamado #${this.ticketId} excluido.`);
+        if (!confirmacao) return;
+        await comSessao(this.cred, (t) => excluirTicket(this.cred, t, this.ticketId, permanente));
+        vscode.window.showInformationMessage(
+          permanente
+            ? `Chamado #${this.ticketId} excluido permanentemente.`
+            : `Chamado #${this.ticketId} movido para a lixeira.`
+        );
         if (GlpiDetalhePanel.aoAlterarListas) GlpiDetalhePanel.aoAlterarListas();
         this.panel.dispose();
       }
@@ -2145,6 +2182,7 @@ class GlpiDetalhePanel {
       const larguraPainel = this.context.globalState.get('glpi.larguraPainelDetalhe') || 250;
 
       // Titulo curto na aba: nome longo estica a guia e atrapalha a navegacao.
+      this.tituloAtual = dados.ticket.name || '';
       const nomeCurto = String(dados.ticket.name || '');
       this.panel.title =
         `#${this.ticketId}` + (nomeCurto ? ' ' + (nomeCurto.length > 18 ? nomeCurto.slice(0, 18) + '...' : nomeCurto) : '');
@@ -2189,18 +2227,35 @@ class GlpiDetalhePanel {
   /* ---- Cabecalho ---- */
   #topo { padding: 18px 20px 14px; border-bottom: 1px solid var(--vscode-widget-border, rgba(127,127,127,.18)); }
   #linhaTitulo { display: flex; align-items: flex-start; gap: 8px; }
-  #tituloChamado { font-size: 21px; font-weight: 600; margin: 0; flex: 1; line-height: 1.35; word-break: break-word; }
+  #tituloChamado { font-size: 24px; font-weight: 400; margin: 0; flex: 1; line-height: 1.35; word-break: break-word; }
+  #numeroChamado { color: var(--vscode-textLink-foreground, #3794ff); cursor: pointer; margin-right: 6px; }
+  #numeroChamado:hover { text-decoration: underline; }
+  #nomeChamado { cursor: pointer; border-radius: 4px; padding: 0 2px; }
+  #nomeChamado:hover { background: rgba(127,127,127,.12); }
+  #acoesTitulo { display: inline-flex; gap: 0; vertical-align: middle; margin-left: 4px; }
   #tituloEditor { flex: 1; display: none; flex-direction: column; gap: 6px; }
+  #linhaAcoesTopo { display: flex; align-items: center; gap: 8px; margin-top: 14px; }
+  #linhaAcoesTopo .splitBtn .principal { background: transparent; color: #ff6b6b;
+     border: 1px solid rgba(220,70,70,.45); border-right: none; border-radius: 5px 0 0 5px; padding: 5px 12px; font-size: 12px; }
+  #linhaAcoesTopo .splitBtn .principal:hover { background: rgba(220,70,70,.15); }
+  #linhaAcoesTopo .splitBtn .chevron { background: transparent; color: #ff6b6b; border: 1px solid rgba(220,70,70,.45);
+     border-radius: 0 5px 5px 0; padding: 5px 8px; }
+  #linhaAcoesTopo .splitBtn .chevron:hover { background: rgba(220,70,70,.15); }
+  #linhaAcoesTopo .btnSecundario { padding: 5px 12px; }
+  .menuDropdown.abrirAbaixo { bottom: auto; top: calc(100% + 4px); }
+  #iconeAtualizar { display: inline-block; }
+  #iconeAtualizar.girando { animation: girar .8s linear infinite; }
+  .avatarMeta { width: 20px; height: 20px; border-radius: 50%; display: inline-flex; align-items: center;
+                justify-content: center; font-size: 9px; font-weight: 700; color: #fff; }
   #tituloInput { width: 100%; font-size: 17px; padding: 6px 8px; font-family: inherit;
                  background: var(--vscode-input-background); color: var(--vscode-input-foreground);
                  border: 1px solid var(--vscode-focusBorder, #007acc); border-radius: 4px; }
-  #acoesTitulo { display: flex; gap: 2px; flex: 0 0 auto; padding-top: 2px; }
   .btnIcone { background: transparent; border: none; color: var(--vscode-foreground); cursor: pointer;
               padding: 5px 7px; border-radius: 4px; font-size: 14px; opacity: .6; line-height: 1; }
   .btnIcone:hover { background: rgba(127,127,127,.15); opacity: 1; }
+  .btnIconePerigo:hover { color: #ff6b6b; background: rgba(220,70,70,.15); }
   .btnIcone.girando { animation: girar .8s linear infinite; }
   @keyframes girar { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-  #numeroChamado { font-size: 18px; font-weight: 400; color: var(--vscode-descriptionForeground, #9d9d9d); margin-top: 1px; }
   #metaChamado { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 12px;
                  font-size: 12px; color: var(--vscode-descriptionForeground, #9d9d9d); }
   .pilulaStatus { display: inline-flex; align-items: center; gap: 5px; padding: 2px 10px; border-radius: 12px;
@@ -2406,7 +2461,15 @@ class GlpiDetalhePanel {
 <body>
   <div id="topo" style="display:none">
     <div id="linhaTitulo">
-      <h1 id="tituloChamado"></h1>
+      <h1 id="tituloChamado">
+        <span id="numeroChamado" title="Abrir chamado no GLPI"></span><span id="nomeChamado"
+          title="Clique para copiar a mensagem padrao do chamado"></span>
+        <span id="acoesTitulo">
+          <button class="btnIcone" id="btnRenomear" title="Renomear chamado">&#9998;</button>
+          <button class="btnIcone" id="btnCopiarLink" title="Copiar link do chamado">&#128279;</button>
+          <button class="btnIcone" id="btnNavegador" title="Abrir no navegador">&#8663;</button>
+        </span>
+      </h1>
       <div id="tituloEditor">
         <input type="text" id="tituloInput" />
         <div class="acoesEdicao">
@@ -2414,15 +2477,19 @@ class GlpiDetalhePanel {
           <button class="btnSecundario" id="tituloCancelar">Cancelar</button>
         </div>
       </div>
-      <div id="acoesTitulo">
-        <button class="btnIcone" id="btnAtualizar" title="Atualizar chamado">&#8635;</button>
-        <button class="btnIcone" id="btnRenomear" title="Renomear chamado">&#9998;</button>
-        <button class="btnIcone" id="btnCopiarLink" title="Copiar link do chamado">&#128279;</button>
-        <button class="btnIcone" id="btnNavegador" title="Abrir no navegador">&#8663;</button>
-      </div>
     </div>
-    <div id="numeroChamado"></div>
     <div id="metaChamado"></div>
+    <div id="linhaAcoesTopo">
+      <div class="splitBtn">
+        <button class="principal" id="btnExcluirTopo" title="Mover o chamado para a lixeira do GLPI">Excluir</button>
+        <button class="chevron" id="btnExcluirChevron" title="Outras opcoes de exclusao">&#9662;</button>
+        <div class="menuDropdown abrirAbaixo" id="menuExcluirTopo">
+          <div class="item" id="opExcluirLixeira">Mover para lixeira</div>
+          <div class="item perigo" id="opExcluirPermanente">Excluir permanentemente</div>
+        </div>
+      </div>
+      <button class="btnSecundario" id="btnAtualizar" title="Atualizar chamado"><span id="iconeAtualizar">&#8635;</span> Atualizar</button>
+    </div>
   </div>
 
   <div id="erro"></div>
@@ -2595,12 +2662,16 @@ class GlpiDetalhePanel {
     <div class="card">
       <h3>Excluir chamado</h3>
       <p style="font-size:12px; margin:0; opacity:.9;">
-        Tem certeza que deseja excluir o chamado #<span id="excluirIdTexto"></span>?
-        Ele sera movido para a lixeira do GLPI.
+        Como deseja excluir o chamado #<span id="excluirIdTexto"></span>?
       </p>
-      <div class="acoes">
+      <p style="font-size:11px; margin:10px 0 0; opacity:.75;">
+        <strong>Mover para lixeira:</strong> pode ser restaurado pela interface do GLPI.<br />
+        <strong>Excluir permanentemente:</strong> apaga de vez, sem volta.
+      </p>
+      <div class="acoes" style="flex-wrap:wrap;">
         <button class="btnSecundario" id="excluirCancelar">Cancelar</button>
-        <button class="btnPerigo" id="excluirConfirmar">Excluir</button>
+        <button class="btnSecundario" id="excluirLixeira">Mover para lixeira</button>
+        <button class="btnPerigo" id="excluirPermanente">Excluir permanentemente</button>
       </div>
     </div>
   </div>
@@ -2809,8 +2880,11 @@ class GlpiDetalhePanel {
       cm.textContent = limparHtml(v.comment_validation);
       texto.appendChild(cm);
     }
+    const excluir = document.createElement('span'); excluir.className = 'menu perigo';
+    excluir.textContent = '\\uD83D\\uDDD1'; excluir.title = 'Remover pedido de aprovacao';
+    excluir.addEventListener('click', () => vscode.postMessage({ type: 'excluirValidacao', id: v.id }));
     const hora = document.createElement('div'); hora.className = 'horaEvento'; hora.textContent = fmtData(v.submission_date);
-    linha.appendChild(icone); linha.appendChild(texto); linha.appendChild(hora);
+    linha.appendChild(icone); linha.appendChild(texto); linha.appendChild(excluir); linha.appendChild(hora);
     return linha;
   }
 
@@ -2976,24 +3050,26 @@ class GlpiDetalhePanel {
     $('carregando').style.display = 'none';
     $('erro').style.display = 'none';
     $('topo').style.display = 'block';
-    $('btnAtualizar').classList.remove('girando');
+    $('iconeAtualizar').classList.remove('girando');
     $('corpo').style.display = 'flex';
     if (m.larguraPainel) $('painelLateral').style.width = m.larguraPainel + 'px';
 
     const t = m.ticket;
 
     /* cabecalho */
-    $('tituloChamado').textContent = t.name || '(sem titulo)';
+    $('numeroChamado').textContent = '#' + t.id;
+    $('nomeChamado').textContent = t.name || '(sem titulo)';
     $('tituloChamado').style.display = 'block';
     $('tituloEditor').style.display = 'none';
-    $('numeroChamado').textContent = '#' + t.id;
     const st = Number(t.status);
     const MAPA_CLS_STATUS = { 1: 'novo', 2: 'atribuido', 3: 'planejado', 4: 'pendente', 5: 'solucionado', 6: 'fechado' };
     const clsPil = MAPA_CLS_STATUS[st] || '';
     const criador = resolverNome(t.users_id_recipient || t.users_id);
+    const avCriador = iniciaisCor(criador);
     $('metaChamado').innerHTML =
       '<span class="pilulaStatus ' + clsPil + '">' + (STATUS_TXT[st] || '-') + '</span>' +
-      '<span>Aberto por <strong>' + criador + '</strong> em ' + fmtData(t.date) + '</span>' +
+      '<span class="avatarMeta" style="background:' + avCriador.cor + '">' + avCriador.iniciais + '</span>' +
+      '<span><strong>' + criador + '</strong> abriu este chamado em ' + fmtData(t.date) + '</span>' +
       (t.date_mod ? '<span>&middot; atualizado em ' + fmtData(t.date_mod) + '</span>' : '');
 
     /* timeline */
@@ -3082,7 +3158,7 @@ class GlpiDetalhePanel {
       $('btnSalvarDetalhes').textContent = 'Salvar alteracoes';
       $('btnComentar').disabled = false;
       $('btnComentar').textContent = 'Comentar';
-      $('btnAtualizar').classList.remove('girando');
+      $('iconeAtualizar').classList.remove('girando');
     }
   });
 
@@ -3108,9 +3184,25 @@ class GlpiDetalhePanel {
     if (e.key === 'Escape') $('tituloCancelar').click();
   });
   $('btnCopiarLink').addEventListener('click', () => vscode.postMessage({ type: 'copiarLink' }));
+  $('nomeChamado').addEventListener('click', () => vscode.postMessage({ type: 'copiarMensagemPadrao' }));
+  $('numeroChamado').addEventListener('click', () => vscode.postMessage({ type: 'abrirNavegador' }));
+  $('btnExcluirTopo').addEventListener('click', () => vscode.postMessage({ type: 'excluirChamado', permanente: false }));
+  $('btnExcluirChevron').addEventListener('click', (e) => {
+    e.stopPropagation();
+    $('menuExcluirTopo').classList.toggle('aberto');
+  });
+  $('opExcluirLixeira').addEventListener('click', () => {
+    $('menuExcluirTopo').classList.remove('aberto');
+    vscode.postMessage({ type: 'excluirChamado', permanente: false });
+  });
+  $('opExcluirPermanente').addEventListener('click', () => {
+    $('menuExcluirTopo').classList.remove('aberto');
+    vscode.postMessage({ type: 'excluirChamado', permanente: true });
+  });
+  document.addEventListener('click', () => $('menuExcluirTopo').classList.remove('aberto'));
   $('btnNavegador').addEventListener('click', () => vscode.postMessage({ type: 'abrirNavegador' }));
   $('btnAtualizar').addEventListener('click', () => {
-    $('btnAtualizar').classList.add('girando');
+    $('iconeAtualizar').classList.add('girando');
     vscode.postMessage({ type: 'recarregar' });
   });
 
@@ -3295,14 +3387,19 @@ class GlpiDetalhePanel {
     $('composerTexto').focus();
   });
 
-  $('opExcluir').addEventListener('click', () => {
+  function abrirOverlayExcluir() {
     $('excluirIdTexto').textContent = ultimoEstado && ultimoEstado.ticket ? ultimoEstado.ticket.id : '';
     $('overlayExcluir').classList.add('aberto');
-  });
+  }
+  $('opExcluir').addEventListener('click', abrirOverlayExcluir);
   $('excluirCancelar').addEventListener('click', () => $('overlayExcluir').classList.remove('aberto'));
-  $('excluirConfirmar').addEventListener('click', () => {
+  $('excluirLixeira').addEventListener('click', () => {
     $('overlayExcluir').classList.remove('aberto');
-    vscode.postMessage({ type: 'excluirChamado' });
+    vscode.postMessage({ type: 'excluirChamado', permanente: false });
+  });
+  $('excluirPermanente').addEventListener('click', () => {
+    $('overlayExcluir').classList.remove('aberto');
+    vscode.postMessage({ type: 'excluirChamado', permanente: true });
   });
 
   /* ---------- redimensionamento ---------- */

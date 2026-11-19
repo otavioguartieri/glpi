@@ -1,5 +1,10 @@
 name: Release automatico
 
+# Todo push na main gera uma build nova (.vsix) e uma release.
+# Se a versao do package.json ja tem tag (ninguem subiu a versao a mao),
+# o workflow sobe o patch sozinho (5.8.3 -> 5.8.4) e commita o package.json
+# de volta na main antes de empacotar.
+
 on:
   push:
     branches: [main]
@@ -7,56 +12,59 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
 jobs:
-  verificar-e-lancar:
+  build-e-release:
     runs-on: ubuntu-latest
+    # Evita loop com o commit de versao que o proprio workflow faz.
+    if: "!contains(github.event.head_commit.message, '[skip ci]')"
     steps:
       - name: Baixar o codigo (com historico de tags)
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Ler a versao do package.json
-        id: pkg
-        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
-
-      - name: Verificar se ja existe uma tag para essa versao
-        id: check
-        run: |
-          if git rev-parse "v${{ steps.pkg.outputs.version }}" >/dev/null 2>&1; then
-            echo "ja existe uma tag para v${{ steps.pkg.outputs.version }} - nada a fazer"
-            echo "existe=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "versao nova detectada: v${{ steps.pkg.outputs.version }}"
-            echo "existe=false" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Configurar Node.js
-        if: steps.check.outputs.existe == 'false'
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
+      - name: Definir a versao da build
+        id: pkg
+        run: |
+          versao=$(node -p "require('./package.json').version")
+          if git rev-parse "v$versao" >/dev/null 2>&1; then
+            echo "v$versao ja publicada - subindo o patch automaticamente"
+            npm version patch --no-git-tag-version
+            versao=$(node -p "require('./package.json').version")
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add package.json
+            git commit -m "chore: versao $versao [skip ci]"
+            git push origin HEAD:main
+          else
+            echo "versao nova definida no package.json: v$versao"
+          fi
+          echo "version=$versao" >> "$GITHUB_OUTPUT"
+
       - name: Instalar o empacotador da extensao
-        if: steps.check.outputs.existe == 'false'
         run: npm install -g @vscode/vsce
 
       - name: Gerar o .vsix
-        if: steps.check.outputs.existe == 'false'
         run: vsce package --allow-missing-repository
 
       - name: Copiar como "latest" (link fixo, sempre a versao mais nova)
-        if: steps.check.outputs.existe == 'false'
-        run: cp *.vsix glpi-ticket-latest.vsix
+        run: cp glpi-ticket-${{ steps.pkg.outputs.version }}.vsix glpi-ticket-latest.vsix
 
       - name: Criar e enviar a tag da versao
-        if: steps.check.outputs.existe == 'false'
         run: |
           git tag "v${{ steps.pkg.outputs.version }}"
           git push origin "v${{ steps.pkg.outputs.version }}"
 
       - name: Publicar a release no GitHub
-        if: steps.check.outputs.existe == 'false'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.pkg.outputs.version }}
